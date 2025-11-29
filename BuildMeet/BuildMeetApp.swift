@@ -2,20 +2,18 @@
 //  BuildMeetApp.swift
 //  BuildMeet
 //
-//  Created by Lwin Oo on 11/24/25.
-//
 
 import SwiftUI
-import CoreData
 
 @main
 struct BuildMeetApp: App {
-    let persistenceController = PersistenceController.shared
+    @StateObject var auth = AuthViewModel()
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
-                .environment(\.managedObjectContext, persistenceController.container.viewContext)
+            RootView()
+                .environmentObject(auth)
         }
     }
 }
+
