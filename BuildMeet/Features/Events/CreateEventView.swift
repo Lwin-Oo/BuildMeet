@@ -8,18 +8,42 @@
 import SwiftUI
 import MapKit
 
+// -------------------------------------
+// Reusable Field Component
+// -------------------------------------
+struct BMField: View {
+    let title: String
+    let placeholder: String
+    @Binding var text: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.subheadline.bold())
+                .foregroundColor(.primary)
+
+            TextField(placeholder, text: $text)
+                .padding()
+                .background(Color(.secondarySystemBackground))
+                .cornerRadius(12)
+        }
+        .padding(.horizontal)
+    }
+}
+
+
+// -------------------------------------
+// Main CreateEventView
+// -------------------------------------
 struct CreateEventView: View {
 
-    // Dropped pin (initial)
     let initialCoordinate: CLLocationCoordinate2D
-
-    // User real location
     let userCoordinate: CLLocationCoordinate2D
 
     @Binding var isPresented: Bool
 
-    // Radius limit (meters)
-    @State private var allowedRadiusMeters: Double = 3000 
+    // Radius limit
+    @State private var allowedRadiusMeters: Double = 3000
 
     // Editable location inside form
     @State private var editableCoordinate: CLLocationCoordinate2D
@@ -32,211 +56,294 @@ struct CreateEventView: View {
 
     // Reverse geocode
     @State private var address: String = "Loading address…"
-    @State private var isLoadingAddress: Bool = true
+    @State private var isLoadingAddress = true
 
     // Search
     @State private var searchQuery: String = ""
     @State private var searchResults: [MKMapItem] = []
-    @State private var isSearching: Bool = false
+    @State private var isSearching = false
     @State private var searchError: String?
 
-    // MARK: - INIT
-    init(
-        initialCoordinate: CLLocationCoordinate2D,
-        userCoordinate: CLLocationCoordinate2D,
-        isPresented: Binding<Bool>
-    ) {
+    // Debouncer
+    @State private var searchDebounceTask: DispatchWorkItem?
+
+    // Init
+    init(initialCoordinate: CLLocationCoordinate2D,
+         userCoordinate: CLLocationCoordinate2D,
+         isPresented: Binding<Bool>) {
+
         self.initialCoordinate = initialCoordinate
         self.userCoordinate = userCoordinate
         self._isPresented = isPresented
         self._editableCoordinate = State(initialValue: initialCoordinate)
     }
 
+
+    // -------------------------------------
+    // BODY
+    // -------------------------------------
     var body: some View {
         ZStack {
 
-            // Background dim
-            Color.black.opacity(0.35)
+            // Dim background
+            Color.black.opacity(0.40)
                 .ignoresSafeArea()
-                .onTapGesture { withAnimation { isPresented = false } }
-
-            VStack(spacing: 20) {
-
-                // HEADER
-                HStack {
-                    Text("Create Event")
-                        .font(.title2.bold())
-                    Spacer()
-                    Button {
-                        withAnimation { isPresented = false }
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 26))
-                            .foregroundColor(.secondary)
+                .onTapGesture {
+                    withAnimation(.spring(response: 0.35)) {
+                        isPresented = false
                     }
                 }
 
-                // LOCATION (reverse-geocoded)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Location")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
+            VStack {
+                Spacer()
 
-                    if isLoadingAddress {
-                        ProgressView()
-                    } else {
-                        Text(address)
-                            .font(.footnote)
-                    }
-                }
+                VStack(spacing: 22) {
 
-                // LOCATION SEARCH
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Adjust Location")
-                        .font(.subheadline.bold())
+                    // Grab Bar
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(Color.white.opacity(0.35))
+                        .frame(width: 40, height: 5)
+                        .padding(.top, 8)
 
+                    // Header
                     HStack {
-                        TextField("Search a place…", text: $searchQuery)
-                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                        Text("Create Event")
+                            .font(.system(size: 22, weight: .semibold))
 
-                        Button("Search") {
-                            performSearch()
-                        }
-                        .disabled(searchQuery.isEmpty)
-                    }
+                        Spacer()
 
-                    if isSearching {
-                        ProgressView().padding(.top, 4)
-                    }
-
-                    if let error = searchError {
-                        Text(error)
-                            .foregroundColor(.red)
-                            .font(.caption)
-                            .padding(.top, 2)
-                    }
-
-                    // SEARCH RESULTS
-                    if !searchResults.isEmpty {
-                        ScrollView {
-                            VStack(spacing: 10) {
-                                ForEach(searchResults, id: \.self) { item in
-                                    Button {
-                                        handleSearchSelection(item)
-                                    } label: {
-                                        VStack(alignment: .leading) {
-                                            Text(item.name ?? "Unknown")
-                                                .font(.headline)
-
-                                            Text(item.placemark.title ?? "")
-                                                .font(.caption)
-                                                .foregroundColor(.secondary)
-                                        }
-                                        .padding(10)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .background(Color(.secondarySystemBackground))
-                                        .cornerRadius(8)
-                                    }
-                                }
+                        Button {
+                            withAnimation(.spring(response: 0.35)) {
+                                isPresented = false
                             }
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 28))
+                                .foregroundStyle(.secondary)
                         }
-                        .frame(maxHeight: 150)
                     }
+                    .padding(.horizontal)
+
+
+                    // CONTENT SCROLL
+                    ScrollView(showsIndicators: false) {
+                        VStack(spacing: 22) {
+
+                            // -------------------------------------
+                            // Mini Map + Address
+                            // -------------------------------------
+                            VStack(alignment: .leading, spacing: 10) {
+
+                                Text("Location")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+
+                                Map(coordinateRegion: .constant(
+                                    MKCoordinateRegion(
+                                        center: editableCoordinate,
+                                        span: .init(latitudeDelta: 0.004,
+                                                    longitudeDelta: 0.004)
+                                    )
+                                ))
+                                .frame(height: 120)
+                                .cornerRadius(14)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 14)
+                                        .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                                )
+
+                                if isLoadingAddress {
+                                    ProgressView()
+                                } else {
+                                    Text(address)
+                                        .font(.footnote)
+                                        .foregroundColor(.primary)
+                                }
+
+                            }
+                            .padding(.horizontal)
+
+
+                            // -------------------------------------
+                            // SEARCH
+                            // -------------------------------------
+                            VStack(alignment: .leading, spacing: 10) {
+
+                                Text("Adjust Location")
+                                    .font(.subheadline.weight(.semibold))
+
+                                // Real-time search bar
+                                TextField("Search a place…", text: $searchQuery)
+                                    .padding(12)
+                                    .background(Color(.secondarySystemBackground))
+                                    .cornerRadius(12)
+                                    .onChange(of: searchQuery) { _ in
+                                        debounceSearch()
+                                    }
+
+                                // Searching indicator
+                                if isSearching {
+                                    ProgressView()
+                                        .padding(.top, 4)
+                                }
+
+                                if let error = searchError {
+                                    Text(error)
+                                        .font(.caption)
+                                        .foregroundColor(.red)
+                                }
+
+                                // Search results dropdown
+                                if !searchResults.isEmpty {
+                                    VStack(spacing: 8) {
+                                        ForEach(searchResults, id: \.self) { item in
+                                            Button {
+                                                handleSearchSelection(item)
+                                            } label: {
+                                                VStack(alignment: .leading, spacing: 3) {
+                                                    Text(item.name ?? "Unknown")
+                                                        .font(.headline)
+
+                                                    Text(item.placemark.title ?? "")
+                                                        .font(.caption)
+                                                        .foregroundColor(.secondary)
+                                                }
+                                                .padding(12)
+                                                .frame(maxWidth: .infinity, alignment: .leading)
+                                                .background(Color(.secondarySystemBackground))
+                                                .cornerRadius(10)
+                                            }
+                                        }
+                                    }
+                                    .transition(.opacity.combined(with: .move(edge: .top)))
+                                }
+
+                            }
+                            .padding(.horizontal)
+
+
+                            Divider().padding(.horizontal)
+
+
+                            // Title + description
+                            BMField(title: "Event Title",
+                                    placeholder: "e.g. Night Build Session",
+                                    text: $title)
+
+                            BMField(title: "Description",
+                                    placeholder: "What’s happening?",
+                                    text: $description)
+
+
+                            // Date picker
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("When")
+                                    .font(.subheadline.bold())
+
+                                DatePicker("Select Time",
+                                           selection: $eventDate)
+                                    .datePickerStyle(.compact)
+                            }
+                            .padding(.horizontal)
+
+
+                            // Urgency
+                            Toggle(isOn: $isUrgent) {
+                                Label("Urgent Event", systemImage: "flame.fill")
+                            }
+                            .padding(.horizontal)
+
+                        }
+                        .padding(.bottom, 12)
+                    }
+
+
+                    // -------------------------------------
+                    // Bottom Create Button
+                    // -------------------------------------
+                    Button {
+                        print("📌 EVENT SAVED:")
+                        print("Title:", title)
+                        print("Desc:", description)
+                        print("Coord:", editableCoordinate)
+
+                        withAnimation(.spring(response: 0.35)) {
+                            isPresented = false
+                        }
+
+                    } label: {
+                        Text("Create Event")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                            .background(title.isEmpty ? Color.gray : Color.blue)
+                            .foregroundColor(.white)
+                            .cornerRadius(14)
+                            .padding(.horizontal)
+                    }
+                    .disabled(title.isEmpty)
+
+                    Spacer(minLength: 10)
                 }
-
-                Divider().padding(.vertical, 4)
-
-                // TITLE
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Event Title")
-                        .font(.subheadline.bold())
-                    TextField("e.g. Night Build Session", text: $title)
-                        .padding()
-                        .background(Color(.secondarySystemBackground))
-                        .cornerRadius(12)
-                }
-
-                // DESCRIPTION
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Description")
-                        .font(.subheadline.bold())
-                    TextField("What’s happening?", text: $description)
-                        .padding()
-                        .background(Color(.secondarySystemBackground))
-                        .cornerRadius(12)
-                }
-
-                // DATE PICKER
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("When")
-                        .font(.subheadline.bold())
-                    DatePicker("Select Time", selection: $eventDate)
-                        .datePickerStyle(.compact)
-                }
-
-                // URGENCY
-                Toggle(isOn: $isUrgent) {
-                    Label("Urgent Event", systemImage: "flame.fill")
-                }
-
-                Spacer(minLength: 0)
-
-                // SUBMIT
-                Button {
-                    print("📌 EVENT READY TO SAVE:")
-                    print("Title:", title)
-                    print("Desc:", description)
-                    print("Urgent:", isUrgent)
-                    print("Time:", eventDate)
-                    print("Address:", address)
-                    print("Coord:", editableCoordinate)
-
-                    withAnimation { isPresented = false }
-                } label: {
-                    Text("Create Event")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(title.isEmpty ? Color.gray : Color.blue)
-                        .foregroundColor(.white)
-                        .cornerRadius(12)
-                }
-                .disabled(title.isEmpty)
+                .frame(maxWidth: 420)
+                .background(.ultraThinMaterial)
+                .cornerRadius(28)
+                .shadow(radius: 35)
+                .padding(.bottom, 15)
             }
-            .padding(20)
-            .frame(maxWidth: 380)
-            .background(.ultraThinMaterial)
-            .cornerRadius(24)
-            .shadow(radius: 20)
-            .transition(.move(edge: .bottom).combined(with: .opacity))
-            .onAppear { reverseGeocode(for: editableCoordinate) }
+        }
+        .onAppear {
+            reverseGeocode(for: editableCoordinate)
         }
     }
 
-    // MARK: - SEARCH
+
+    // -----------------------------------------------------
+    // SEARCH — REAL TIME WITH DEBOUNCE
+    // -----------------------------------------------------
+    private func debounceSearch() {
+        searchDebounceTask?.cancel()
+
+        let task = DispatchWorkItem {
+            if searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                self.searchResults = []
+                return
+            }
+            performSearch()
+        }
+
+        searchDebounceTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: task)
+    }
+
+
     private func performSearch() {
         searchError = nil
+
         let req = MKLocalSearch.Request()
         req.naturalLanguageQuery = searchQuery
         req.region = MKCoordinateRegion(
-            center: userCoordinate, // search around the user
+            center: userCoordinate,
             latitudinalMeters: allowedRadiusMeters * 2,
             longitudinalMeters: allowedRadiusMeters * 2
         )
 
         isSearching = true
-        MKLocalSearch(request: req).start { resp, err in
+
+        MKLocalSearch(request: req).start { resp, _ in
             isSearching = false
             searchResults = resp?.mapItems ?? []
         }
     }
 
-    // MARK: - HANDLE SELECTION
+
+    // -----------------------------------------------------
+    // ON SELECTION — CLOSE DROPDOWN + FILL SEARCH BOX
+    // -----------------------------------------------------
     private func handleSearchSelection(_ item: MKMapItem) {
         guard let newCoord = item.placemark.location?.coordinate else { return }
 
         let dist = distance(from: userCoordinate, to: newCoord)
-
         if dist > allowedRadiusMeters {
             searchError = "❌ This location is outside your radius."
             return
@@ -244,43 +351,57 @@ struct CreateEventView: View {
 
         editableCoordinate = newCoord
         reverseGeocode(for: newCoord)
+
+        withAnimation(.easeOut(duration: 0.25)) {
+            searchQuery = item.name ?? ""
+            searchResults = []       // Hide dropdown
+        }
+
         searchError = nil
     }
 
-    // MARK: - REVERSE GEOCODE
+
+    // -----------------------------------------------------
+    // Reverse Geocode
+    // -----------------------------------------------------
     private func reverseGeocode(for coord: CLLocationCoordinate2D) {
         isLoadingAddress = true
-        let loc = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
 
-        CLGeocoder().reverseGeocodeLocation(loc) { marks, _ in
+        CLGeocoder().reverseGeocodeLocation(
+            CLLocation(latitude: coord.latitude, longitude: coord.longitude)
+        ) { marks, _ in
+
             if let p = marks?.first {
-                let parts = [
-                    p.name,
-                    p.locality,
-                    p.administrativeArea,
-                    p.country
-                ].compactMap { $0 }
-
-                address = parts.joined(separator: ", ")
+                address = [p.name,
+                           p.locality,
+                           p.administrativeArea,
+                           p.country]
+                    .compactMap { $0 }
+                    .joined(separator: ", ")
             } else {
                 address = "Unknown location"
             }
+
             isLoadingAddress = false
         }
     }
 
-    // MARK: - DISTANCE
-    private func distance(from a: CLLocationCoordinate2D, to b: CLLocationCoordinate2D) -> Double {
-        let la = CLLocation(latitude: a.latitude, longitude: a.longitude)
-        let lb = CLLocation(latitude: b.latitude, longitude: b.longitude)
-        return la.distance(from: lb)
+    // -----------------------------------------------------
+    // Distance Function
+    // -----------------------------------------------------
+    private func distance(from a: CLLocationCoordinate2D,
+                          to b: CLLocationCoordinate2D) -> Double {
+        CLLocation(latitude: a.latitude, longitude: a.longitude)
+            .distance(from: CLLocation(latitude: b.latitude, longitude: b.longitude))
     }
 }
 
+
 #Preview {
     CreateEventView(
-        initialCoordinate: CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194),
-        userCoordinate: CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194),
+        initialCoordinate: .init(latitude: 37.7749, longitude: -122.4194),
+        userCoordinate: .init(latitude: 37.7749, longitude: -122.4194),
         isPresented: .constant(true)
     )
 }
+
