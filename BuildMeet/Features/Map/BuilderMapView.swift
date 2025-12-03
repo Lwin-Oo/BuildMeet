@@ -19,6 +19,10 @@ struct BuilderMapView: View {
     @State private var showToolbox = true
 
     @State private var dropModeActive = false
+    
+    @State private var showCreateEventPopup = false
+    @State private var pendingEventCoordinate: CLLocationCoordinate2D?
+
 
     var body: some View {
         ZStack {
@@ -37,7 +41,7 @@ struct BuilderMapView: View {
             if showRadiusToast {
                 toastView(
                     icon: "exclamationmark.triangle.fill",
-                    text: "Too far — upgrade to extend radius.",
+                    text: "Too far — upgrade to Premium to extend your radius.",
                     color: .yellow
                 )
                 .zIndex(999)
@@ -105,6 +109,20 @@ struct BuilderMapView: View {
                     )
                 }
             }
+            
+            // 📄 CREATE EVENT POPUP
+            if showCreateEventPopup, let coord = pendingEventCoordinate {
+                CreateEventView(
+                    initialCoordinate: coord,
+                    userCoordinate: viewModel.currentUser!.coordinate,
+                    isPresented: $showCreateEventPopup
+                )
+
+
+                .zIndex(9999)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
         }
 
         // MARK: - ON APPEAR
@@ -139,12 +157,10 @@ struct BuilderMapView: View {
                 object: nil,
                 queue: .main
             ) { _ in
-                withAnimation {
-                    dropModeActive = false
-                }
+                withAnimation { dropModeActive = false }
             }
 
-            // 🟩 SUCCESS LISTENER
+            // 🟩 LISTENER: Pin dropped successfully
             NotificationCenter.default.addObserver(
                 forName: .eventPinDropped,
                 object: nil,
@@ -156,10 +172,11 @@ struct BuilderMapView: View {
                     return
                 }
 
-                print("📌 Received event pin at", coord)
-                viewModel.createEventPin(at: coord)
+                print("📌 Pin dropped at", coord)
 
-                withAnimation { showEventToast = true }
+                // ⭐ Open event creation popup instead of creating event
+                pendingEventCoordinate = coord
+                withAnimation { showCreateEventPopup = true }
             }
 
             // ⛔ REJECT LISTENER
@@ -172,6 +189,7 @@ struct BuilderMapView: View {
                 withAnimation { showRadiusToast = true }
             }
         }
+
     }
 
     // MARK: - Activate Drop Mode
